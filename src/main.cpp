@@ -1,171 +1,19 @@
 #include <opencv2/opencv.hpp>
 
+#include <cmath>
 #include <iostream>
 #include <vector>
 #include <algorithm>
 
-struct Corner{
-    int x;
-    int y;
-    int score;
-};  
 
-const cv::Point FAST_CIRCLE[16] =
-{
-    { 0, -3},
-    { 1, -3},
-    { 2, -2},
-    { 3, -1},
-
-    { 3,  0},
-    { 3,  1},
-    { 2,  2},
-    { 1,  3},
-
-    { 0,  3},
-    {-1,  3},
-    {-2,  2},
-    {-3,  1},
-
-    {-3,  0},
-    {-3, -1},
-    {-2, -2},
-    {-1, -3}
-};
-
-const std::vector dx = {-1, 0, 1, -1, 1, -1, 0, 1};
-const std::vector dy = {-1, -1, -1, 0, 0, 1, 1, 1};
-
-int classifyPixel(int centerIntensity, int neighbourIntensity, int threshold){
-
-    if(neighbourIntensity > centerIntensity + threshold){
-        return 1;
-    }
-
-    if(neighbourIntensity < centerIntensity - threshold){
-        return -1;
-    }
-
-    return 0;
-}
-
-int isFastCorner(const cv::Mat& image, int x, int y, int threshold){
-
-    const int center = static_cast<int>(image.at<uchar>(cv::Point(x, y)));
-
-    constexpr int REQUIRED = 9;
-
-    int states[16];
-    int score = 0;
-
-    for(int i = 0; i < 16; i++){
-        int nx = x + FAST_CIRCLE[i].x;
-        int ny = y + FAST_CIRCLE[i].y;
-
-        int neighbour = static_cast<int>(image.at<uchar>(cv::Point(nx, ny)));
-
-        states[i] = classifyPixel(center, neighbour, threshold);
-        score += std::abs(neighbour - center);
-
-        //std::cout << neighbour << " " << center << " ";
-        //std::cout << states[i] << std::endl;
-
-    }
-
-    for(int i = 0; i < 16; i++){
-
-        bool allBright = true;
-        bool allDark = true;
-
-        for(int k = 0; k < REQUIRED; k++){
-            int index = (i + k) % 16;
-
-            if(states[index] != 1){
-                allBright = false;
-            }
-            if(states[index] != -1){
-                allDark = false;
-            }
-
-        }
-
-        if(allBright || allDark){
-            return score;
-        }
-    }
-
-    return 0;
-}
-
-
-std::vector<Corner> detectFast(const cv::Mat& image, int threshold){
-
-    std::vector<Corner> corners;
-    
-    constexpr int BORDER = 3;
-
-    for(int y = BORDER; y < image.rows - BORDER; y++){
-        for(int x = BORDER; x < image.cols - BORDER; x++){
-            int score = isFastCorner(image, x, y, threshold);
-            if(score > 0){
-                corners.push_back({x, y, score});
-            }
-        }
-    }
-
-    return corners;
-}
-
-
-std::vector<Corner> nonMaximumSuppression(const std::vector<Corner>& corners, int width, int height){
-    std::vector<Corner> result;
-    std::vector<std::vector<int>> scoreMap(height, std::vector<int>(width, 0));
-    constexpr int NMS_POINTS = 8;
-    //std::cout << corners.size() << std::endl;
-
-    for(const Corner& corner: corners){
-        scoreMap[corner.y][corner.x] = corner.score;
-    }
-
-    for(const Corner& corner : corners){
-        bool isMax = true;
-
-        for(int i = 0; i < 8; i++){
-            int nx = corner.x + dx[i];
-            int ny = corner.y + dy[i];
-
-            if(nx < 0 || nx >= width || ny < 0 || ny >= height){
-                continue;
-            }
-
-            if(scoreMap[ny][nx] > corner.score){
-                isMax = false;
-                break;
-            }
-        }
-
-        if(isMax){
-            result.push_back(corner);
-        }
-
-    }
-   
-    return result;
-    
-}
-
-
-std::vector<cv::Mat> buildImagePyramid(cv::Mat& image, int levels){
-    constexpr int scaleFactor = 2;
-    std::vector<cv::Mat> imagePyramid
-    for(int i = 0; i < levels, i++){
-        int scale 
-    }
-}
-
+#include "orb/types.hpp"
+#include "orb/pyramid.hpp"
+#include "orb/fast.hpp"
 
 
 int main(int argc, char** argv){
+
+    constexpr int LEVELS = 4;
     
     if(argc < 3){
         std::cerr << "Usage: ./orb image.jpg threshold\n";
@@ -179,37 +27,30 @@ int main(int argc, char** argv){
         return 1;
     }
 
+    std::vector<cv::Mat> imagePyramid = orb::buildImagePyramid(gray, LEVELS);
+
     std::cout << "Image width: " << gray.cols << "\n";
     std::cout << "Image height: " << gray.rows << "\n";
 
-    std::vector<Corner> corners = detectFast(gray, std::stoi(argv[2]));
+    std::vector<std::vector<orb::Corner>> imagePyramidCorners;
 
-    cv::imshow("", gray);
-    cv::waitKey(0);
+    for(int level = 0; level < LEVELS; level++){
+        std::vector<orb::Corner> corners = orb::detectFast(imagePyramid[level], std::stoi(argv[2]));
+        corners = orb::nonMaximumSuppression(corners, imagePyramid[level].rows, imagePyramid[level].cols);
 
-    std::cout << corners.size() << std::endl;
+        for(orb::Corner& corner : corners){
+            corner.level = level;
+        }
 
-    corners = nonMaximumSuppression(corners, gray.rows, gray.cols);
+        imagePyramidCorners.push_back(corners);
 
-    std::cout << corners.size() << std::endl;
-
-    for (const Corner& corner : corners)
-    {
-        cv::circle(
-            gray,
-            cv::Point(corner.x, corner.y),
-            10,
-            cv::Scalar(0, 0, 255),
-            1
-        );
+        std::cout << imagePyramid[level].rows << " " << imagePyramid[level].cols << std::endl;
     }
 
-    cv::imshow(
-        "FAST from scratch",
-        gray
-    );
+    //std::vector<Corner> corners = detectFast(gray, std::stoi(argv[2]));
 
-    cv::waitKey(0);
-
+    for(const std::vector<orb::Corner>& corners : imagePyramidCorners){
+        std::cout << corners.size() << std::endl;
+    }
     return 0;
 }
